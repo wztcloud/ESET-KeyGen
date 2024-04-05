@@ -30,7 +30,7 @@ LOGO = """
                                                 Project Version: v1.4.3.0f4 DEV
                                                 Project Devs: rzc0d3r, AdityaGarg8, k0re,
                                                               Fasjeit, alejanpa17, Ischunddu,
-                                                              soladify, AngryBonk
+                                                              soladify, AngryBonk, Xoncia
 """
 EMAIL_API = None
 DEBUG_MODE = False
