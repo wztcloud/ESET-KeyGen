@@ -5,6 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 
+import selenium_stealth
 import subprocess
 import traceback
 import platform
@@ -218,65 +219,68 @@ class TenMinuteMailAPI(object):
 
 
 class TempMailAPI(object):
-    def __init__(self, driver=None, token=""):
+    def __init__(self, driver=None):
         self.driver = driver
-        self.token = token
+        self.token = ""
         self.email = ""
-        self.headers = {
-            "Authorization": "Bearer " + token,
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        }
         self.window_handle = None
-        if self.token != None:
-            try:
-                self.email = requests.get(
-                    "https://web2.temp-mail.org/messages", headers=self.headers
-                ).json()["mailbox"]
-            except Exception as E:
-                token = None
 
     def init(self):
         self.driver.execute_script('window.open("https://temp-mail.org", "_blank")')
-        console_log(
-            f"{Fore.CYAN}Solve the cloudflare captcha on the page manually!!!{Fore.RESET}",
-            INFO,
-            False,
-        )
-        self.driver.switch_to.window(self.driver.window_handles[-1])
-        WebDriverWait(self.driver, 20).until(
-        lambda d: d.find_element(By.ID, "mail").get_attribute("value") and "@" in d.find_element(By.ID, "mail").get_attribute("value")
-           )
-        self.email = self.driver.execute_script("return document.getElementById('mail').value")
-        if self.email == "":
-            raise RuntimeError("TempMailAPI: Your IP is blocked, try again later or try use VPN!")
-        if self.email.find("@") != -1:
-            self.window_handle = self.driver.current_window_handle
-            return True
-        raise RuntimeError("TempMailAPI: Failed to retrieve email address.")
-
+        console_log(f'{Fore.CYAN}Solve the cloudflare captcha on the page manually!!!{Fore.RESET}', INFO, False)
+        time.sleep(10)
+        self.driver.switch_to.window(self.driver.window_handles[0])
+        self.driver.close()
+        self.driver.switch_to.window(self.driver.window_handles[0])
+        self.window_handle = self.driver.current_window_handle
+        for _ in range(DEFAULT_MAX_ITER):
+            try:
+                self.email = self.driver.execute_script(f'return {GET_EBID}("mail").value')
+            except:
+                pass
+            if self.email == '':
+                raise RuntimeError('TempMailAPI: Your IP is blocked, try again later or try use VPN!')
+            if self.email.find('@') != -1:
+                self.window_handle = self.driver.current_window_handle
+                return True
+            time.sleep(DEFAULT_DELAY)
+        raise RuntimeError('TempMailAPI: Your IP is blocked, try again later or try use VPN!')
+    
     def auth(self):
-        self.driver.switch_to.window(self.window_handle)
-        WebDriverWait(self.driver, 20).until(lambda d: d.get_cookie("token") is not None)
-        self.token = self.driver.get_cookie("token")["value"]
-        if self.token:
-            self.headers["Authorization"] = "Bearer " + self.token
+        if self.token != "":
             return True
-        raise RuntimeError("TempMailAPI: Error during authorization!")
+        self.driver.switch_to.window(self.window_handle)
+        for _ in range(DEFAULT_MAX_ITER):
+            try:
+                self.token = self.driver.get_cookie('token')['value']
+                return True
+            except:
+                time.sleep(1)
+        raise RuntimeError('TempMailAPI: Error during authorization!')
 
     def get_messages(self):
         try:
-            return requests.get(
-                "https://web2.temp-mail.org/messages", headers=self.headers
-            ).json()["messages"]
-        except:
+            self.driver.switch_to.window(self.window_handle)
+            return self.driver.execute_script(f"""
+                var req = new XMLHttpRequest()
+                req.open("GET", "https://web2.temp-mail.org/messages", false)
+                req.setRequestHeader("Authorization", "Bearer {self.token}")
+                req.send(null)
+                return JSON.parse(req.response)
+            """)["messages"]
+        except Exception as E:
             return None
 
     def get_message(self, message_id):
         try:
-            return requests.get(
-                f"https://web2.temp-mail.org/messages/{message_id}",
-                headers=self.headers,
-            ).json()
+            self.driver.switch_to.window(self.window_handle)
+            return self.driver.execute_script(f"""
+                var req = new XMLHttpRequest()
+                req.open("GET", "https://web2.temp-mail.org/messages/{message_id}", false)
+                req.setRequestHeader("Authorization", "Bearer {self.token}")
+                req.send(null)
+                return JSON.parse(req.response)
+            """)
         except:
             return None
 
@@ -474,14 +478,12 @@ class SharedTools(object):
             elif args["email_api"] == "tempmail":
                 email_obj.auth()
                 messages = email_obj.get_messages()
-                for message in messages:
-                    if (
-                        message["from"].find("product.eset.com") != -1
-                        or message["subject"].find("activation") != -1
-                    ):
-                        activated_href = email_obj.get_message(message["_id"])[
-                            "bodyHtml"
-                        ]
+                try:
+                    for message in messages:
+                        if message["from"].find("product.eset.com") != -1 or message["subject"].find("activation") != -1:
+                            activated_href = email_obj.get_message(message["_id"])["bodyHtml"]
+                except:
+                    pass
             if activated_href is not None:
                 match = re.search(r"token=[a-zA-Z\d:/-]*", activated_href)
                 if match is not None:
@@ -489,6 +491,7 @@ class SharedTools(object):
                     return token
             time.sleep(delay)
         raise RuntimeError("Token retrieval error!!!")
+
 
 class WebDriverInstaller(object):
     def __init__(self):
@@ -783,8 +786,7 @@ class WebDriverInstaller(object):
 
 class EsetRegister(object):
     def __init__(
-        self, registered_email_obj: SecEmailAPI, eset_password: str, driver: Chrome
-    ):
+        self, registered_email_obj: SecEmailAPI, eset_password: str, driver: Chrome):
         self.email_obj = registered_email_obj
         self.eset_password = eset_password
         self.driver = driver
@@ -983,8 +985,7 @@ class EsetKeygen(object):
 
 class EsetBusinessRegister(object):
     def __init__(
-        self, registered_email_obj: SecEmailAPI, eset_password: str, driver: Chrome
-    ):
+        self, registered_email_obj: SecEmailAPI, eset_password: str, driver: Chrome):
         self.email_obj = registered_email_obj
         self.driver = driver
         self.eset_password = eset_password
@@ -1094,8 +1095,7 @@ class EsetBusinessRegister(object):
 
 class EsetBusinessKeygen(object):
     def __init__(
-        self, registered_email_obj: SecEmailAPI, eset_password: str, driver: Chrome
-    ):
+        self, registered_email_obj: SecEmailAPI, eset_password: str, driver: Chrome):
         self.email_obj = registered_email_obj
         self.eset_password = eset_password
         self.driver = driver
@@ -1265,17 +1265,10 @@ if __name__ == "__main__":
         # initialization and configuration of everything necessary for work
         webdriver_installer = WebDriverInstaller()
         # changing input arguments for special cases
-        if (
-            platform.release() == "7" and webdriver_installer.platform[0] == "win"
-        ):  # fix for Windows 7
+        if (platform.release() == "7" and webdriver_installer.platform[0] == "win"):  # fix for Windows 7
             args["no_headless"] = True
-        elif (
-            args["business_account"]
-            or args["business_key"]
-            or args["email_api"] == "tempmail"
-        ):
+        elif (args["business_account"] or args["business_key"] or args["email_api"] == "tempmail"):
             args["no_headless"] = True
-
         driver = None
         webdriver_path = None
         browser_name = "chrome"
@@ -1291,9 +1284,7 @@ if __name__ == "__main__":
             browser_name = "firefox"
         if args["edge"]:
             browser_name = "edge"
-        if (
-            not args["skip_webdriver_menu"] and browser_name != "firefox"
-        ):  # updating or installing microsoft edge webdriver
+        if (not args["skip_webdriver_menu"] and browser_name != "firefox"): # updating or installing microsoft edge webdriver
             webdriver_path = webdriver_installer.webdriver_installer_menu(args["edge"])
             if webdriver_path is not None:
                 os.chmod(webdriver_path, 0o777)
@@ -1305,8 +1296,6 @@ if __name__ == "__main__":
                 (not args["no_headless"]),
             )
             if browser_name == "chrome":
-                import selenium_stealth
-
                 selenium_stealth.stealth(
                     driver,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -1407,9 +1396,7 @@ if __name__ == "__main__":
 
     except Exception as E:
         traceback_string = traceback.format_exc()
-        if (
-            str(type(E)).find("selenium") and traceback_string.find("Stacktrace:") != -1
-        ):  # disabling stacktrace output
+        if (str(type(E)).find("selenium") and traceback_string.find("Stacktrace:") != -1): # disabling stacktrace output
             traceback_string = traceback_string.split("Stacktrace:", 1)[0]
         console_log(traceback_string, ERROR)
         time.sleep(3)  # exit-delay
